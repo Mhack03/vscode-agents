@@ -477,9 +477,6 @@ Agents have access to specialized skills for domain-specific guidance:
 - **Testing & QA** - Unit, integration, E2E testing strategies
 - **Security Best Practices** - Authentication, encryption, vulnerability prevention
 
-### T-Mobile Specific
-- **T-Mobile API Gateway** - Integration patterns, PoP token generation
-
 ---
 
 ## Cost Optimization
