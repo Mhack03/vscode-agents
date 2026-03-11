@@ -1,0 +1,181 @@
+@* blazor-architecture/sample_codes/common-patterns/stateful-component.razor *@
+@* Full lifecycle example: data loading, state management, JS interop, disposal *@
+
+@page "/products"
+@attribute [StreamRendering]
+@rendermode InteractiveAuto
+
+@implements IAsyncDisposable
+@inject IProductService ProductService
+@inject CartService Cart
+@inject IJSRuntime JS
+@inject ILogger<ProductCatalog> Logger
+
+<PageTitle>Products</PageTitle>
+
+<h1>Product Catalog</h1>
+
+@* Loading state — visible during streaming render *@
+@if (_products is null)
+{
+    <div class="spinner-border" role="status">
+        <span class="visually-hidden">Loading...</span>
+    </div>
+}
+else if (!_products.Any())
+{
+    <p class="text-muted">No products found.</p>
+}
+else
+{
+    <div class="row row-cols-1 row-cols-md-3 g-4">
+        @foreach (var product in _products)
+        {
+            <div class="col" @key="product.Id">
+                <div class="card h-100">
+                    <div class="card-body">
+                        <h5 class="card-title">@product.Name</h5>
+                        <p class="card-text">@product.Price.ToString("C")</p>
+                    </div>
+                    <div class="card-footer">
+                        <button class="btn btn-primary btn-sm"
+                                @onclick="() => AddToCart(product)"
+                                disabled="@_addingToCart">
+                            Add to Cart
+                        </button>
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+
+    <div class="mt-3">
+        <button class="btn btn-outline-secondary btn-sm"
+                @onclick="PreviousPage"
+                disabled="@(!_page.HasPrev)">
+            ← Previous
+        </button>
+        <span class="mx-3">Page @_page.Page of @_page.TotalPages</span>
+        <button class="btn btn-outline-secondary btn-sm"
+                @onclick="NextPage"
+                disabled="@(!_page.HasNext)">
+            Next →
+        </button>
+    </div>
+}
+
+@if (_toastMessage is not null)
+{
+    <div class="toast-container position-fixed bottom-0 end-0 p-3">
+        <div class="toast show">
+            <div class="toast-body">@_toastMessage</div>
+        </div>
+    </div>
+}
+
+@code {
+    // Parameters — set by Blazor Router
+    [Parameter, SupplyParameterFromQuery] public int Page { get; set; } = 1;
+
+    // State
+    private PagedResult<ProductDto>? _page;
+    private IReadOnlyList<ProductDto>? _products;
+    private bool _addingToCart;
+    private string? _toastMessage;
+    private IJSObjectReference? _toastModule;
+
+    // ── Lifecycle ─────────────────────────────────────────────────────────────
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Runs on server during pre-render AND on client during hydration
+        // StreamRendering makes the server send data as it arrives
+        await LoadProductsAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        // Called when route parameters (Page) change, e.g., pagination
+        if (_page is not null && _page.Page != Page)
+            await LoadProductsAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // JS interop only available after first render (browser environment)
+            try
+            {
+                _toastModule = await JS.InvokeAsync<IJSObjectReference>(
+                    "import", "./js/toast.js");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Toast module not available (SSR context)");
+            }
+        }
+    }
+
+    // ── Data Loading ───────────────────────────────────────────────────────────
+
+    private async Task LoadProductsAsync()
+    {
+        _page     = await ProductService.GetPagedAsync(Page, pageSize: 12);
+        _products = _page.Items;
+    }
+
+    // ── Event Handlers ─────────────────────────────────────────────────────────
+
+    private async Task AddToCart(ProductDto product)
+    {
+        _addingToCart = true;
+
+        try
+        {
+            Cart.AddItem(product);
+
+            _toastMessage = $"Added {product.Name} to cart!";
+
+            if (_toastModule is not null)
+                await _toastModule.InvokeVoidAsync("showToast", _toastMessage);
+
+            // Clear toast after 3 seconds
+            await Task.Delay(3000);
+            _toastMessage = null;
+        }
+        finally
+        {
+            _addingToCart = false;
+        }
+    }
+
+    private async Task PreviousPage()
+    {
+        if (_page?.HasPrev == true)
+        {
+            Page--;
+            await LoadProductsAsync();
+        }
+    }
+
+    private async Task NextPage()
+    {
+        if (_page?.HasNext == true)
+        {
+            Page++;
+            await LoadProductsAsync();
+        }
+    }
+
+    // ── Disposal ───────────────────────────────────────────────────────────────
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_toastModule is not null)
+        {
+            try { await _toastModule.DisposeAsync(); }
+            catch (JSDisconnectedException) { /* Ignore — circuit already closed */ }
+        }
+    }
+}
